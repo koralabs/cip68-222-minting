@@ -1,0 +1,210 @@
+minting cip68_222_minting
+
+enum Redeemer {
+    MINT
+    BURN
+}
+
+struct MintConfig {
+    fee_address: ByteArray
+    fee_schedule: [][]Int
+}
+
+struct Utxo {
+    hash:ByteArray
+    index:Int
+}
+
+struct MintAsset {
+    name: ByteArray
+    utxo: Utxo
+    price: Int
+    valid_until: Int
+    discount: [][]Data
+}
+
+struct MintSettings {
+    payment_address: ByteArray
+    reference_token_address: ByteArray
+    assets: []MintAsset
+    details: Option[Map[String]Data]
+}
+
+struct MintCost {
+    payment: Int
+    fee: Int
+}
+
+const SETTINGS_HANDLE_NAME: String
+const HANDLE_POLICY: MintingPolicyHash = MintingPolicyHash::new(#f0ff48bbb7bbe9d59a40f1ce90e9e9d0ff5002ec48f232b49ca0fb9a)
+const LBL_444: ByteArray = #001bc280 // (444)
+const LBL_222: ByteArray = #000de140 // (222)
+const LBL_100: ByteArray = #000643b0 // (100)
+const SETTINGS_HANDLE: AssetClass = AssetClass::new(HANDLE_POLICY, LBL_222 + (SETTINGS_HANDLE_NAME.encode_utf8()))
+const CONFIG_HANDLE: AssetClass = AssetClass::new(HANDLE_POLICY, LBL_222 + ("mint_config_444".encode_utf8()))
+
+func load_config(ctx: ScriptContext) -> MintConfig {
+    config_input: Option[TxInput] = ctx.tx.ref_inputs.find_safe((input: TxInput) -> Bool { 
+        input.output.value.get_safe(CONFIG_HANDLE) == 1
+    });
+    assert(config_input != Option[TxInput]::None, "mint_config_444 reference input missing");
+    config = MintConfig::from_data(config_input.unwrap().output.datum.get_inline_data());
+
+    config
+}
+
+func load_settings(ctx: ScriptContext) -> (MintSettings, Bool) {
+    settings_input_ref: Option[TxInput] = ctx.tx.ref_inputs.find_safe((input: TxInput) -> Bool { 
+        input.output.value.get_safe(SETTINGS_HANDLE) == 1
+    });
+    settings_output_reg: Option[TxOutput] = ctx.tx.outputs.find_safe((output: TxOutput) -> Bool { 
+        output.value.get_safe(SETTINGS_HANDLE) == 1
+    });
+    
+    assert(settings_input_ref != Option[TxInput]::None || settings_output_reg != Option[TxOutput]::None, "settings input missing");
+
+    if (settings_output_reg != Option[TxOutput]::None) {
+        (MintSettings::from_data(settings_output_reg.unwrap().datum.get_inline_data()), true)
+    }
+    else {
+        signed: Bool = ctx.tx.signatories.find_safe((pubkey: PubKeyHash) -> {
+            settings_input_ref.unwrap().output.address.credential.switch{
+                    p: PubKey => p.hash, 
+                    else => error("Invalid credential hash")} == pubkey}
+            ) != Option[PubKeyHash]::None;
+        (MintSettings::from_data(settings_input_ref.unwrap().output.datum.get_inline_data()), signed)
+    }
+}
+
+func get_mint_fee(payment: Int, config: MintConfig) -> Int {
+    fee: []Int = config.fee_schedule.sort((a:[]Int, b:[]Int) -> {a.head >= b.head}).find((key:[]Int) -> {
+        payment >= key.head
+    });
+    fee.get(1)
+}
+
+func get_mint_cost(asset: ByteArray, settings: MintSettings, config: MintConfig, ctx: ScriptContext) -> MintCost {
+    // Validate it is in assets list and starts with LBL_444
+    assert(asset.starts_with(LBL_444), "Asset is not a (444) token");
+    mint_asset_opt: Option[MintAsset] = settings.assets.find_safe((a: MintAsset) -> { a.name == asset });
+    assert(mint_asset_opt != Option[MintAsset]::None, "Asset not found in policy");
+    mint_asset:MintAsset = mint_asset_opt.unwrap();
+    discounted_price: Int = if (mint_asset.discount == [][]Data{}) { mint_asset.price }
+        else {
+            //[ [#1234, [1, 10]], [#1234, [3, 2]], [#12345, [1, 5]] ]
+            discounts: Map[ByteArray][]Int = mint_asset.discount.fold[Map[ByteArray][]Int]((acc: Map[ByteArray][]Int, policy: []Data) -> {
+                acc.prepend(ByteArray::from_data(policy.get(0)),[]Int::from_data(policy.get(1)))
+            }, Map[ByteArray][]Int{});
+            sorted_map: Map[ByteArray][]Int = discounts.sort((_, a: []Int, _, b: []Int) -> Bool {a.get(1) <= b.get(1)});
+            sorted_map.fold_lazy[Int]((policy: ByteArray, discount: []Int, next: () -> Int) -> Int {
+                if (ctx.tx.outputs.fold_lazy[Int]((output: TxOutput, next: () -> Int ) -> Int {
+                            mph: MintingPolicyHash = MintingPolicyHash::new(policy.slice(0,28));
+                            total: Int = output.value.get_assets().to_map().get_safe(mph).switch{
+                                    Some{assets} => {
+                                        assets.fold_lazy[Int]((asset: ByteArray, count: Int, next: () -> Int) -> Int {
+                                            if (policy.length > 28 || asset.starts_with(policy.slice(28, policy.length))) {
+                                                count + next()
+                                            } else {next()}
+                                        }, 0)
+                                    },
+                                    else => 0
+                                };
+                            if (total >= discount.get(0)) {
+                                total
+                            }
+                            else {total + next()}
+                        }, 0) >= discount.get(0)) {
+                    discount.get(1)
+                }
+                else {next()}
+            }, mint_asset.price)
+    };
+    fee: Int = get_mint_fee(discounted_price, config);
+    mint_cost:MintCost = MintCost { discounted_price - fee, fee };
+    if (mint_asset.valid_until > 0) {
+        assert(ctx.tx.time_range.end - ctx.tx.time_range.start <= Duration::new(15 * 60 * 1000), "Invalid slot range for asset");
+        assert(ctx.tx.time_range.start < Time::new(mint_asset.valid_until), "This asset minting has expired");
+        mint_cost
+    }
+    else { mint_cost }
+}
+
+func main(redeemer: Redeemer, ctx: ScriptContext) -> Bool {
+    (settings: MintSettings, signed_by_owner: Bool) = load_settings(ctx);
+    minted_assets: Map[ByteArray]Int = ctx.tx.minted.get_policy(ctx.get_current_minting_policy_hash());
+    redeemer.switch {
+        MINT => {
+            config: MintConfig = (if (minted_assets.any((asset_name: ByteArray, _) -> {asset_name.starts_with(LBL_444)})) {load_config(ctx)} else {MintConfig{#, [][]Int{}}});
+
+            total: MintCost = minted_assets.fold[MintCost]((costs:MintCost, key: ByteArray, value: Int) -> {
+                if (key.starts_with(LBL_444)) { //MINT_ASSET
+                    minted_cost: MintCost = get_mint_cost(key, settings, config, ctx);
+                    MintCost {costs.payment + (if (signed_by_owner) { 0 } else { minted_cost.payment }) * value, costs.fee + minted_cost.fee * value }
+                }
+                else
+                    {
+                        // Validate the assets have unique names
+                        assert(settings.assets.filter((a: MintAsset) -> { a.name == key }).length <= 1, "Duplicate asset found: " + minted_assets.head_key.show());
+                        if (key.starts_with(LBL_100)) { //MINT_REFERENCE_TOKEN
+                            // This can only happen once per asset_name
+                            // It consumes the UTxO in the settings
+                            utxo: Utxo = settings.assets.filter((a: MintAsset) -> { 
+                                a.name.slice(4, a.name.length) == key.slice(4, key.length) 
+                            }).get_singleton().utxo;
+
+                            assert(ctx.tx.inputs.find_safe(
+                                    (input: TxInput) -> {input.output_id == TxOutputId::new(TxId::new(utxo.hash), utxo.index)}
+                                ) != Option[TxInput]::None, "Required UTxO is missing");
+                            
+                            // Only if signed by SETTINGS_HANDLE owner
+                            assert(signed_by_owner, "Missing policy owner signature");
+
+                            token_output: TxOutput = ctx.tx.outputs.find((output: TxOutput) -> {
+                                output.value.contains(Value::new(AssetClass::new(ctx.get_current_minting_policy_hash(), key), 1))
+                            });
+                            
+                            // Assert that it is being sent to reference_token_address
+                            assert(token_output.address == Address::from_bytes(settings.reference_token_address), "Reference Token not sent to reference_token_address");
+
+                            // Assert there is only one
+                            assert(minted_assets.get(key) == 1, "Only 1 Reference token can be minted with this asset name:" + key.show());
+                            costs
+                        }
+                    else { 
+                        if (key == #) {
+                            assert(signed_by_owner, "Missing policy owner signature");
+                            assert(settings.assets.length == 0, "There can be no Assets listed for a royalties mint");
+                            costs
+                        }
+                        else {error("Invalid asset_name_label for this policy. Must be (100) or (444)") } }
+                }
+            }, MintCost {0, 0});
+            // Total to payment_address contains sum of asset prices
+            assert(total.payment <= 0 || ctx.tx.outputs.any((output: TxOutput) -> {
+                output.address == Address::from_bytes(settings.payment_address)
+                && output.value.contains(Value::lovelace(total.payment))}), "Policy minting payment is unpaid: ₳" + (total.payment / 1000000).show());
+            // Total to fee_address contains sum of asset fees
+            assert(total.fee <= 0 || ctx.tx.outputs.any((output: TxOutput) -> {
+                output.address == Address::from_bytes(config.fee_address)
+                && output.value.contains(Value::lovelace(total.fee))}), "Minting fee is unpaid");
+            
+            true
+        },
+        BURN => {
+            assert(minted_assets.all((asset_name: ByteArray, amount: Int) -> {asset_name.starts_with(LBL_100) && amount < 0}), "The BURN redeemer only allows reference tokens to be burnt");
+            minted_assets.for_each((asset_name: ByteArray, amount: Int) -> {
+                total_input: Int = ctx.tx.inputs.fold[Int]((total: Int, input: TxInput) -> {
+                    found_asset: Option[Int] = input.output.value.get_assets().to_map().get_safe(ctx.get_current_minting_policy_hash()).switch{Some{assets} => {assets.get_safe(asset_name)}, else => {Option[Int]::None}};
+                    if (found_asset != Option[Int]::None) {
+                        total + found_asset.unwrap()
+                    }
+                    else {
+                        total
+                    }
+                }, 0);
+                assert(total_input + amount > 0, "There should be at least one reference token remaining")
+            });
+            true
+        }
+    }
+}

@@ -1,0 +1,87 @@
+spending cip68_100_editing
+
+enum Redeemer {
+    UPDATE_REFERENCE_TOKEN {
+        asset: ByteArray
+    }
+}
+
+struct Utxo {
+    hash:ByteArray
+    index:Int
+}
+
+struct MintAsset {
+    name: ByteArray
+    utxo: Utxo
+    price: Int
+    valid_until: Int
+    discount: Map[ByteArray]Map[Int]Int
+}
+
+struct MintSettings {
+    payment_address: ByteArray
+    reference_token_address: ByteArray
+    assets: []MintAsset
+    details: Option[Map[String]Data]
+}
+
+struct MintCost {
+    payment: Int
+    fee: Int
+}
+
+const SETTINGS_HANDLE_NAME: String
+const MINTING_POLICY_ID: ByteArray
+const HANDLE_POLICY: MintingPolicyHash = MintingPolicyHash::new(#f0ff48bbb7bbe9d59a40f1ce90e9e9d0ff5002ec48f232b49ca0fb9a)
+const LBL_444: ByteArray = #001bc280 // (444)
+const LBL_222: ByteArray = #000de140 // (222)
+const LBL_100: ByteArray = #000643b0 // (100)
+const SETTINGS_HANDLE: AssetClass = AssetClass::new(HANDLE_POLICY, LBL_222 + (SETTINGS_HANDLE_NAME.encode_utf8()))
+
+func load_settings(ctx: ScriptContext) -> (MintSettings, Bool) {
+    settings_input_ref: Option[TxInput] = ctx.tx.ref_inputs.find_safe((input: TxInput) -> Bool { 
+        input.output.value.get_safe(SETTINGS_HANDLE) == 1
+    });
+    settings_output_reg: Option[TxOutput] = ctx.tx.outputs.find_safe((output: TxOutput) -> Bool { 
+        output.value.get_safe(SETTINGS_HANDLE) == 1
+    });
+    
+    assert(settings_input_ref != Option[TxInput]::None || settings_output_reg != Option[TxOutput]::None, "settings input missing");
+
+    if (settings_output_reg != Option[TxOutput]::None) {
+        (MintSettings::from_data(settings_output_reg.unwrap().datum.get_inline_data()), true)
+    }
+    else {
+        signed: Bool = ctx.tx.signatories.find_safe((pubkey: PubKeyHash) -> {
+            settings_input_ref.unwrap().output.address.credential.switch{
+                    p: PubKey => p.hash, 
+                    else => error("Invalid credential hash")} == pubkey}
+            ) != Option[PubKeyHash]::None;
+        (MintSettings::from_data(settings_input_ref.unwrap().output.datum.get_inline_data()), signed)
+    }
+}
+
+func main(_, redeemer: Redeemer, ctx: ScriptContext) -> Bool {
+    (settings: MintSettings, signed_by_owner: Bool) = load_settings(ctx);
+    redeemer.switch {
+        r: UPDATE_REFERENCE_TOKEN => {
+            token_output_opt: Option[TxOutput] = ctx.tx.outputs.find_safe((output: TxOutput) -> {
+                output.value.contains(Value::new(AssetClass::new(MintingPolicyHash::new(MINTING_POLICY_ID), r.asset), 1))
+            });
+            
+            assert(token_output_opt != Option[TxOutput]::None, "Reference token output missing");
+            token_output: TxOutput = token_output_opt.unwrap();
+
+            // Assert that it is being sent to reference_token_address
+            assert(token_output.address == Address::from_bytes(settings.reference_token_address), "Reference Token not sent to reference_token_address");
+
+            // Only if signed by SETTINGS_HANDLE owner 
+            assert(signed_by_owner, "Missing policy owner signature");
+            true
+        },
+        else => {
+            false
+        }
+    }
+}
