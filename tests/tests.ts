@@ -1,5 +1,6 @@
 import fs from "fs";
 import { strict as assert } from 'node:assert';
+import { withParameterHttpFixture } from './support/parameter-http-fixture.ts';
 import * as helios from '@koralabs/helios'
 import { ContractTester, Test } from '@koralabs/kora-labs-contract-testing'
 import { CommonFixtures, EditingFixtures, MintingFixtures, paymentAddress, refTokenAddress } from "./fixtures";
@@ -41,7 +42,7 @@ const runTests = async () => {
     const editingFixtures = new EditingFixtures(mintingContract.mintingPolicyHash.hex, commonFixtures, commonFixtures.configCbor, helios.Address.fromHash(new helios.ValidatorHash(editingContract.validatorHash.hex)));
     
     const tester = new ContractTester(helios.Address.fromBech32(commonFixtures.walletAddress));
-    await tester.init();
+    await withParameterHttpFixture(() => tester.init());
 
     // These cases share mutable fixtures; complete each before setting up the next.
     const cases = [

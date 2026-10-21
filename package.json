@@ -4,7 +4,10 @@
     "description": "",
     "type": "module",
     "scripts": {
-        "test": "tsx tests/tests.ts"
+        "test": "npm run test:fixtures && npm run test:harness && npm run test:contracts",
+        "test:fixtures": "tsx --test tests/network-parameters.test.ts",
+        "test:harness": "tsx --test tests/harness-regression.test.ts",
+        "test:contracts": "tsx tests/tests.ts"
     },
     "author": "et",
     "license": "MIT",
