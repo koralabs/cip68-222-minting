@@ -1,6 +1,6 @@
-import * as helios from '@hyperionbt/helios'
+import * as helios from '@koralabs/helios'
 import * as https from 'https'
-import { Fixtures, getAddressAtDerivation, handlesPolicy } from '@koralabs/kora-labs-contract-testing';
+import { Fixture, getAddressAtDerivation, handlesPolicy } from '@koralabs/kora-labs-contract-testing';
 import { AssetNameLabel } from '@koralabs/kora-labs-common';
 
 helios.config.set({ IS_TESTNET: false, AUTO_SET_VALIDITY_RANGE: true });
@@ -16,7 +16,7 @@ export const paymentAddress =  (await getAddressAtDerivation(1)).toBech32();
 export const refTokenAddress =  (await getAddressAtDerivation(2)).toBech32();
 export const feeAddress =  (await getAddressAtDerivation(3)).toBech32();
 
-export class CommonFixtures extends Fixtures {
+export class CommonFixtures {
     settings:any[] = [];
     config:any[] = [];
     settingsCbor = '';
@@ -25,10 +25,6 @@ export class CommonFixtures extends Fixtures {
     paymentAddress = '';
     feeAddress = '';
     refTokenAddress = '';
-
-    constructor() {
-        super();
-    }
 
     async initialize(settings?: any[], config?: any[]) {
         this.walletAddress = walletAddress;
@@ -129,14 +125,14 @@ export class CommonFixtures extends Fixtures {
 
 }
 
-export class EditingFixtures extends Fixtures {
+export class EditingFixtures extends Fixture {
     policyId: string
     commonFixtures: CommonFixtures
     bgDatumCbor:string
     scriptAddress: helios.Address
 
     constructor(policyId: string, commonFixtures: CommonFixtures, bgDatumCbor:string, scriptAddress: helios.Address) {
-        super();
+        super(scriptAddress.validatorHash!);
         this.policyId = policyId;
         this.commonFixtures = commonFixtures;
         this.bgDatumCbor = bgDatumCbor;
@@ -175,13 +171,13 @@ export class EditingFixtures extends Fixtures {
     }
 }
 
-export class MintingFixtures extends Fixtures {
+export class MintingFixtures extends Fixture {
     policyId :string;
     commonFixtures: CommonFixtures;
     configCbor:string;
 
     constructor(policyId: string, commonFixtures: CommonFixtures, configCbor:string) {
-        super();
+        super(new helios.ValidatorHash(policyId));
         this.policyId = policyId;
                 this.commonFixtures = commonFixtures;
         this.configCbor = configCbor;

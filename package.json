@@ -4,9 +4,7 @@
     "description": "",
     "type": "module",
     "scripts": {
-        "test": "npm run test:old && npm run test:new",
-        "test:old": "node --es-module-specifier-resolution=node tests/tests.js",
-        "test:new": "tsx -r dotenv/config tests/txTests.ts"
+        "test": "tsx tests/tests.ts"
     },
     "author": "et",
     "license": "MIT",

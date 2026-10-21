@@ -1,0 +1,23 @@
+name: PR contract tests
+on:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+  packages: read
+jobs:
+  tests:
+    name: Contract behavior tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          registry-url: https://npm.pkg.github.com
+          scope: '@koralabs'
+      - run: npm ci --ignore-scripts
+        env:
+          NODE_AUTH_TOKEN: ${{ github.token }}
+      - run: npm test
