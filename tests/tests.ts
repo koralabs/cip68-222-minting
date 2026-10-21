@@ -1,4 +1,6 @@
 import fs from "fs";
+import { strict as assert } from 'node:assert';
+import { withParameterHttpFixture } from './support/parameter-http-fixture.ts';
 import * as helios from '@koralabs/helios'
 import { ContractTester, Test } from '@koralabs/kora-labs-contract-testing'
 import { CommonFixtures, EditingFixtures, MintingFixtures, paymentAddress, refTokenAddress } from "./fixtures";
@@ -9,13 +11,14 @@ const runTests = async () => {
     let mintingFile = fs.readFileSync("./minting.helios").toString();
     const mintingProgram = helios.Program.new(mintingFile);
     mintingProgram.parameters.SETTINGS_HANDLE_NAME = "settings";
-    const mintingContract = mintingProgram.compile();
+    // Test.build compiles with optimization; fixture policy IDs must identify that same script.
+    const mintingContract = mintingProgram.compile(true);
 
     let editingFile = fs.readFileSync("./editing.helios").toString();
     const editingProgram = helios.Program.new(editingFile);
     editingProgram.parameters.SETTINGS_HANDLE_NAME = "settings";
     editingProgram.parameters.MINTING_POLICY_ID = mintingContract.mintingPolicyHash.hex;
-    const editingContract = editingProgram.compile();
+    const editingContract = editingProgram.compile(true);
 
     let commonFixtures = new CommonFixtures();
     await commonFixtures.initialize();
@@ -40,19 +43,20 @@ const runTests = async () => {
     const editingFixtures = new EditingFixtures(mintingContract.mintingPolicyHash.hex, commonFixtures, commonFixtures.configCbor, helios.Address.fromHash(new helios.ValidatorHash(editingContract.validatorHash.hex)));
     
     const tester = new ContractTester(helios.Address.fromBech32(commonFixtures.walletAddress));
-    await tester.init();
-    
-    Promise.all([
+    await withParameterHttpFixture(() => tester.init());
+
+    // These cases share mutable fixtures; complete each before setting up the next.
+    const cases = [
         // Minting Contract - SHOULD APPROVE
-        tester.test("MINTING", "New Policy, 444 mints, 100 mints", new Test(mintingProgram, mintingFixtures.initialize)),
-        tester.test("MINTING", "Multiple 444 mints", new Test(mintingProgram, () => {
+        () => tester.test("MINTING", "New Policy, 444 mints, 100 mints", new Test(mintingProgram, mintingFixtures.initialize)),
+        () => tester.test("MINTING", "Multiple 444 mints", new Test(mintingProgram, () => {
             mintingFixtures.initialize();
             mintingFixtures.signatories = [];
             mintingFixtures.minted = mintingFixtures.minted?.slice(0,3);
             mintingFixtures.outputs = mintingFixtures.outputs?.slice(0,3);
             return mintingFixtures;
         })),
-        tester.test("MINTING", "Max assets, Mint 444 & 100", new Test(mintingProgram, () => {
+        () => tester.test("MINTING", "Max assets, Mint 444 & 100", new Test(mintingProgram, () => {
             const mintingMax = new MintingFixtures(mintingProgram.compile(true).mintingPolicyHash.hex, commonFixtureMax, commonFixtureMax.configCbor);
             mintingMax.initialize();
             mintingMax.outputs = mintingMax.outputs?.slice(0,2).concat([new helios.TxOutput(
@@ -64,7 +68,7 @@ const runTests = async () => {
             mintingMax.minted = [[`${AssetNameLabel.LBL_444}${maxAsset}`, BigInt(1)], [`${AssetNameLabel.LBL_100}${maxAsset}`, BigInt(1)]];
             return mintingMax;
         }, undefined, true)),
-        tester.test("MINTING", "Multiple 444 mints w/ discount", new Test(mintingProgram, () => {
+        () => tester.test("MINTING", "Multiple 444 mints w/ discount", new Test(mintingProgram, () => {
             mintingFixtures.initialize();
             mintingFixtures.signatories = [];
             mintingFixtures.minted = mintingFixtures.minted?.slice(0,3);
@@ -84,7 +88,7 @@ const runTests = async () => {
             ))
             return mintingFixtures;
         })),
-        tester.test("MINTING", "Multiple 444 mints w/ different discount", new Test(mintingProgram, () => {
+        () => tester.test("MINTING", "Multiple 444 mints w/ different discount", new Test(mintingProgram, () => {
             mintingFixtures.initialize();
             mintingFixtures.signatories = [];
             mintingFixtures.minted = mintingFixtures.minted?.slice(0,3);
@@ -104,7 +108,7 @@ const runTests = async () => {
             ))
             return mintingFixtures;
         })),
-        tester.test("MINTING", "Burn approved", new Test(mintingProgram, () => {
+        () => tester.test("MINTING", "Burn approved", new Test(mintingProgram, () => {
             mintingFixtures.initialize();
             mintingFixtures.inputs?.push(new helios.TxInput(
                 new helios.TxOutputId(`0000000000000000000000000000000000000000000000000000000000000001#1`),
@@ -119,7 +123,7 @@ const runTests = async () => {
         })),
 
         // Minting Contract - SHOULD DENY
-        tester.test("MINTING", "Multiple 444 mints, low payment", new Test(mintingProgram, () => {
+        () => tester.test("MINTING", "Multiple 444 mints, low payment", new Test(mintingProgram, () => {
             mintingFixtures.initialize();
             mintingFixtures.signatories = [];
             mintingFixtures.minted = mintingFixtures.minted?.slice(0,3);
@@ -129,7 +133,7 @@ const runTests = async () => {
             ));
             return mintingFixtures;
         }), false, 'Policy minting payment is unpaid'),
-        tester.test("MINTING", "Burn too many", new Test(mintingProgram, () => {
+        () => tester.test("MINTING", "Burn too many", new Test(mintingProgram, () => {
             mintingFixtures.initialize();
             mintingFixtures.inputs?.push(new helios.TxInput(
                 new helios.TxOutputId(`0000000000000000000000000000000000000000000000000000000000000001#1`),
@@ -140,7 +144,7 @@ const runTests = async () => {
             mintingFixtures.redeemer = helios.UplcData.fromCbor('d87a9fff');
             return mintingFixtures;
         }), false, 'There should be at least one reference token remaining'),
-        tester.test("MINTING", "Burn 444 token", new Test(mintingProgram, () => {
+        () => tester.test("MINTING", "Burn 444 token", new Test(mintingProgram, () => {
             mintingFixtures.initialize();
             mintingFixtures.inputs?.push(new helios.TxInput(
                 new helios.TxOutputId(`0000000000000000000000000000000000000000000000000000000000000001#1`),
@@ -153,9 +157,14 @@ const runTests = async () => {
         }), false, 'The BURN redeemer only allows reference tokens to be burnt'),
         
         // Editing Contract - SHOULD APPROVE
-        tester.test("EDITING", "happy path", new Test(editingProgram, editingFixtures.initialize)),
-    ]
-    ).then(() => {tester.displayStats()});
+        () => tester.test("EDITING", "happy path", new Test(editingProgram, editingFixtures.initialize)),
+    ];
+    for (const test of cases) await test();
+    tester.displayStats();
+    const totals = tester.getTotals();
+    assert.equal(totals.testCount, 10, 'all existing contract cases must execute');
+    assert.equal(totals.failCount, 0, 'contract expectations failed');
+    assert.equal(totals.successCount, 10, 'all contract cases must be evaluated successfully');
 }
 
 (async()=> {
