@@ -11,13 +11,14 @@ const runTests = async () => {
     let mintingFile = fs.readFileSync("./minting.helios").toString();
     const mintingProgram = helios.Program.new(mintingFile);
     mintingProgram.parameters.SETTINGS_HANDLE_NAME = "settings";
-    const mintingContract = mintingProgram.compile();
+    // Test.build compiles with optimization; fixture policy IDs must identify that same script.
+    const mintingContract = mintingProgram.compile(true);
 
     let editingFile = fs.readFileSync("./editing.helios").toString();
     const editingProgram = helios.Program.new(editingFile);
     editingProgram.parameters.SETTINGS_HANDLE_NAME = "settings";
     editingProgram.parameters.MINTING_POLICY_ID = mintingContract.mintingPolicyHash.hex;
-    const editingContract = editingProgram.compile();
+    const editingContract = editingProgram.compile(true);
 
     let commonFixtures = new CommonFixtures();
     await commonFixtures.initialize();
