@@ -1,8 +1,12 @@
 # cip68-222-minting
 
+## Contributor test policy
+
+Tests and coverage run locally only, never in GitHub Actions, directly or through lifecycle scripts, composites, workflow templates, or shared helpers. Preserve local test commands and use authorized package read access locally. Build, lint, publication, deployment, and production guards remain permitted. Remove obsolete required test checks when retiring them.
+
 ## Contract tests
 
-`npm ci --ignore-scripts` installs the exact lockfile; `npm test` runs five parameter-boundary tests, four real harness regressions, then ten original TypeScript contract cases with `tsx`. `npm run test:contracts` runs those ten cases directly. Scoped packages are hosted on GitHub Packages. Use existing authorized read access locally; PR Actions requests only built-in `contents: read` and `packages: read`. The testing-package owner must grant this repository Actions read access. Never put an operator token in workflow secrets or substitute a compiler to bypass an unavailable archive.
+`npm ci --ignore-scripts` installs the exact lockfile; `npm test` runs five parameter-boundary tests, four real harness regressions, then ten original TypeScript contract cases with `tsx`. `npm run test:contracts` runs those ten cases directly. Scoped packages are hosted on GitHub Packages. Use existing authorized read access locally; tests no longer request GitHub Actions package access. Never put an operator token in workflow secrets or substitute a compiler to bypass an unavailable archive.
 
 The consumer intentionally pins the corrected immutable `kora-labs-contract-testing` **0.0.10** maintenance release, registry gitHead `c6f4116f9a2be6b3f62c0a4f8596015d38c382fc`. Its archive bytes/SHA512, source identity and exact `helios` **0.16.8-1** dependency were independently verified before updating this lock. The compiler and every other locked dependency's version/integrity are unchanged. This is the reviewed maintenance line rooted at published 0.0.7; it is not recovery or acceptance of current upstream master's missing 0.16.8-2. The maintenance publication leaves upstream's latest tag at 0.0.9.
 
